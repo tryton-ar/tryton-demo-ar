@@ -1,0 +1,24 @@
+Tryton demo for Argentina
+=========================
+
+Script of proteus to create a demo database with some custom modules of
+Argentina.
+
+* account_ar
+* party_ar
+* account_voucher_ar
+* account_check_ar
+* account_retencion_ar
+* account_invoice_ar
+* sale_pos_ar
+* subdiario
+* citi_afip
+* current_account
+* recover_invoice_ar
+* bank_ar
+
+Thanks
+------
+
+This code is based on the tryton_demo.py file of the repository:
+https://hg.tryton.org/tryton-tools
