@@ -14,8 +14,8 @@ from proteus import config as pconfig
 TODAY = datetime.date.today()
 
 
-def set_config(database):
-    return pconfig.set_trytond(database)
+def set_config(database, config_file):
+    return pconfig.set_trytond(database, config_file=config_file)
 
 
 def activate_modules(config, modules):
@@ -60,11 +60,11 @@ def setup_party(config, modules):
     except ValueError:
         party = Party(name=name)
         party.addresses.pop()
-        party.addresses.append(Address(street='Av. Libertador 1555',
-                zip='1503', city='Ciudad Autonoma de Buenos Aires', country=ar,
+        party.addresses.append(Address(street='Av. Libertador 1473',
+                zip='1425', city='Ciudad Autonoma de Buenos Aires', country=ar,
                 subdivision=caba))
         party.contact_mechanisms.append(ContactMechanism(type='phone',
-                value='(011) 963-6590'))
+                value='+541152889900'))
         party.contact_mechanisms.append(ContactMechanism(type='website',
                 value='https://www.bellasartes.gob.ar/'))
         party.vat_number = '30714248169'
@@ -72,7 +72,7 @@ def setup_party(config, modules):
         party.save()
     customers.append(party)
 
-    name = 'Biblioteca Utopia'
+    name = 'Centro Cultural de la Cooperación Floreal Gorini'
     try:
         party, = Party.find([('name', '=', name)])
     except ValueError:
@@ -82,7 +82,7 @@ def setup_party(config, modules):
                 zip='1506', city='Ciudad Autonoma de Buenos Aires', country=ar,
                 subdivision=caba))
         party.contact_mechanisms.append(ContactMechanism(type='phone',
-                value='(011) 348-3000'))
+                value='+541150778000'))
         party.contact_mechanisms.append(ContactMechanism(type='website',
                 value='http://www.centrocultural.coop/'))
         party.vat_number = '30518428264'
@@ -100,7 +100,7 @@ def setup_party(config, modules):
                 zip='1509', city='Rosario', country=ar,
                 subdivision=santa_fe))
         party.contact_mechanisms.append(ContactMechanism(type='phone',
-                value='(341) 346-6883'))
+                value='+543416795466'))
         party.vat_number = '30712374310'
         party.iva_condition = 'responsable_inscripto'
         party.save()
@@ -126,13 +126,17 @@ def setup_company(config):
     Country = Model.get('country.country')
 
     ars, = Currency.find([('code', '=', 'ARS')])
+    rate = ars.rates.new()
+    rate.date = datetime.date(TODAY.year, 1, 1)
+    rate.rate = Decimal('44.30')
+    ars.save()
     ar, = Country.find([('code', '=', 'AR')])
 
     company_config = Wizard('company.company.config')
     company_config.execute('company')
     company = company_config.form
-    party = Party(name='Union Papelera Platense')
-    party.vat_number = '30709170046'
+    party = Party(name='Cooperativa de Trabajo La Metalurgica LTDA')
+    party.vat_number = '30710288565'
     party.iva_condition = 'responsable_inscripto'
     party.save()
     company.party = party
@@ -141,7 +145,7 @@ def setup_company(config):
 
     # Reload context
     User = Model.get('res.user')
-    config._context = User.get_preferences(True, config.context)
+    config._context = User.get_preferences(True, {})
 
     company, = Company.find()
     return company
@@ -232,10 +236,11 @@ def setup_account(config, modules, company):
     FiscalYear = Model.get('account.fiscalyear')
     Sequence = Model.get('ir.sequence')
     SequenceStrict = Model.get('ir.sequence.strict')
+    Party = Model.get('party.party')
 
     root_template, = AccountTemplate.find([
         ('parent', '=', None),
-        ('name', '=', 'Plan Contable Argentino para Cooperativas'),
+        ('name', '=', 'Plan Contable Argentino'),
         ])
     create_chart_account = Wizard('account.create_chart')
     create_chart_account.execute('account')
@@ -245,18 +250,25 @@ def setup_account(config, modules, company):
 
     receivable, = Account.find([
             ('kind', '=', 'receivable'),
-            ('code', '=', '1135'),  # Deudores por ventas
+            ('code', '=', '11301'),  # Deudores por ventas
             ('company', '=', company.id),
             ])
     payable, = Account.find([
             ('kind', '=', 'payable'),
-            ('code', '=', '2111'),  # Proveedores
+            ('code', '=', '21301'),  # Proveedores
             ('company', '=', company.id),
             ])
 
     create_chart_account.form.account_receivable = receivable
     create_chart_account.form.account_payable = payable
     create_chart_account.execute('create_properties')
+
+    # Set account for parties created without company
+    parties = Party.find([])
+    for party in parties:
+        party.account_receivable = receivable
+        party.account_payable = payable
+    Party.save(parties)
 
     for start_date in (TODAY + relativedelta(month=1, day=1, years=-1),
             TODAY + relativedelta(month=1, day=1),
@@ -270,17 +282,18 @@ def setup_account(config, modules, company):
             company=company)
         post_move_sequence.save()
         fiscalyear.post_move_sequence = post_move_sequence
+        invoice_sequence, = fiscalyear.invoice_sequences
         if 'account_invoice' in modules:
-            for attr, name in (('out_invoice_sequence', 'Factura'),
-                    ('in_invoice_sequence', 'Factura Proveedor'),
-                    ('out_credit_note_sequence', 'Nota de Credito'),
-                    ('in_credit_note_sequence', 'Nota de credito proveedor')):
+            for attr, name in (('out_invoice_sequence', 'Invoice'),
+                    ('in_invoice_sequence', 'Supplier Invoice'),
+                    ('out_credit_note_sequence', 'Credit Note'),
+                    ('in_credit_note_sequence', 'Supplier Credit Note')):
                 sequence = SequenceStrict(
                     name='%s %s' % (name, start_date.year),
                     code='account.invoice',
                     company=company)
                 sequence.save()
-                setattr(fiscalyear, attr, sequence)
+                setattr(invoice_sequence, attr, sequence)
         if 'account_voucher_ar' in modules:
             sequence = Sequence(
                 name='%s %s' % ('Recibo de Pago', start_date.year),
@@ -314,19 +327,20 @@ def setup_product(config, modules, company=None):
         Account = Model.get('account.account')
         expense, = Account.find([
                 ('kind', '=', 'expense'),
-                ('code', '=', '5249'),  # Gastos Varios
+                ('code', '=', '51100'),  # Gastos operativos general
                 ('company', '=', company.id),
                 ])
         revenue, = Account.find([
                 ('kind', '=', 'revenue'),
-                ('code', '=', '515'),  # Ingresos por Ventas
+                ('code', '=', '41100'),  # Ingresos por ventas
                 ('company', '=', company.id),
                 ])
+        account_category = Category(name="Papeles", accounting=True)
+        account_category.account_expense = expense
+        account_category.account_revenue = revenue
+        account_category.save()
 
     papers = Category(name='Papeles')
-    if 'account_product' in modules:
-        papers.account_expense = expense
-        papers.account_revenue = revenue
     papers.save()
 
     sizes = {}
@@ -342,15 +356,18 @@ def setup_product(config, modules, company=None):
 
     margin = Decimal('1.01')
     for quantity in (250, 500, 1000, 2500):
-        for format, category in sizes.iteritems():
+        for format, category in sizes.items():
             paper_template = ProductTemplate(name='%s Papel %s'
                 % (format, quantity))
-            paper_template.category = category
+            paper_template.categories.append(Category(category.id))
+            if 'account_product' in modules:
+                paper_template.account_category = account_category
             paper_template.default_uom = unit
             paper_template.type = 'goods'
             paper_template.list_price = (Decimal('0.02') * quantity * margin
                 ).quantize(Decimal('0.0001'))
-            paper_template.cost_price = Decimal('0.01') * quantity
+            paper, = paper_template.products
+            paper.cost_price = Decimal('0.01') * quantity
             if 'account_product' in modules:
                 paper_template.account_expense = expense
                 paper_template.account_revenue = revenue
@@ -418,12 +435,12 @@ def setup_account_invoice_post(config, modules, company):
             ('type', '=', 'out'),
             ('state', 'in', ['draft', 'validated']),
             ])
-    invoices = random.sample(invoices, len(invoices) * 2 / 3)
-    invoices = list(chain(*zip(invoices,
+    invoices = random.sample(invoices, len(invoices) * 2 // 3)
+    invoices = list(chain(*list(zip(invoices,
                 Invoice.find([
                         ('type', '=', 'in'),
                         ('state', 'in', ['draft', 'validated']),
-                        ]))))
+                        ])))))
 
     invoice_date = TODAY + relativedelta(months=-1)
     i = j = 0
@@ -448,7 +465,7 @@ def setup_account_voucher_ar(config, modules, company):
 
     ars, = Currency.find([('code', '=', 'ARS')])
     bank, = Account.find([
-            ('code', '=', '11141'), # Banco
+            ('code', '=', '11104'), # Banco misc
             ('company', '=', company.id),
             ])
 
@@ -478,7 +495,7 @@ def setup_account_voucher_ar(config, modules, company):
             ('move.state', '=', 'posted'),
             #('payment_amount', '!=', 0),
             ])
-    move_lines = random.sample(move_lines, len(move_lines) * 2 / 3)
+    move_lines = random.sample(move_lines, len(move_lines) * 2 // 3)
     if not move_lines:
         return
 
@@ -492,7 +509,7 @@ def setup_account_voucher_ar(config, modules, company):
         del voucher.lines[1:]
         payment_line = voucher.lines[0]
         payment_line.amount = payment_line.amount_unreconciled
-        payment_line.save()
+        #payment_line.save()
         voucher.save()
         paymode_line = AccountVoucherLinePaymode(voucher=voucher, pay_mode=paymode,
             pay_amount = payment_line.amount_unreconciled)
@@ -516,7 +533,7 @@ def setup_account_payment(config, modules, company):
             ('reconciliation', '=', None),
             ('payment_amount', '!=', 0),
             ])
-    lines = random.sample(lines, len(lines) * 2 / 3)
+    lines = random.sample(lines, len(lines) * 2 // 3)
     if not lines:
         return
 
@@ -525,12 +542,12 @@ def setup_account_payment(config, modules, company):
     pay_line.execute('start')
 
     payments = Payment.find([])
-    payments = random.sample(payments, len(payments) * 2 / 3)
+    payments = random.sample(payments, len(payments) * 2 // 3)
 
     for payment in payments:
         payment.click('approve')
 
-    payments = random.sample(payments, len(payments) * 2 / 3)
+    payments = random.sample(payments, len(payments) * 2 // 3)
     i = j = 0
     while i < len(payments):
         j = random.randint(1, 5)
@@ -553,27 +570,25 @@ def setup_account_statement(config, modules, company):
     sequence.save()
 
     cash, = Account.find([
-            #('name', '=', 'Main Cash'),
-	    ('code', '=', '1111'), # Caja
+	    ('code', '=', '11101'), # Caja pesos
             ('company', '=', company.id),
             ])
 
     account_journal = AccountJournal(name='Banco',
         type='statement',
-        credit_account=cash,
-        debit_account=cash,
         sequence=sequence)
     account_journal.save()
 
     journal = Journal(name='Banco',
         journal=account_journal,
+        account=cash,
         validation='balance')
     journal.save()
 
     invoices = Invoice.find([
             ('state', '=', 'posted'),
             ])
-    invoices = random.sample(invoices, len(invoices) * 2 / 3)
+    invoices = random.sample(invoices, len(invoices) * 2 // 3)
 
     total_amount = Decimal(0)
     statement = Statement(name='001',
@@ -681,7 +696,7 @@ def setup_stock(config, activated, company, suppliers):
         shipment = ShipmentIn()
         shipment.supplier = supplier
         all_moves = shipment.incoming_moves.find()
-        moves = random.sample(all_moves, len(all_moves) * 2 / 3)
+        moves = random.sample(all_moves, len(all_moves) * 2 // 3)
         while moves:
             shipment = ShipmentIn()
             shipment.supplier = supplier
@@ -707,13 +722,14 @@ def setup_project(config, activated, company, customers):
             'Calendar': ['design'],
             }
 
-    for name, task_names in customer_projects.iteritems():
+    for name, task_names in customer_projects.items():
         project = Work(name=name, type='project', timesheet_available=False)
         project.party = random.choice(customers)
         for task_name in task_names:
             task = Work(name=task_name, type='task', timesheet_available=True)
             task.effort_duration = datetime.timedelta(
-                    hours=random.randint(1, 5))
+                days=random.randint(10, 30),
+                hours=random.randint(1, 5))
             task.progress = random.randint(1, 100) // 5 * 5 / 100.
             project.children.append(task)
         project.save()
@@ -760,12 +776,12 @@ def setup_production(config, activated, company):
         Account = Model.get('account.account')
         expense, = Account.find([
                 ('kind', '=', 'expense'),
-                ('code', '=', '5249'),  # Gastos Varios
+                ('code', '=', '51100'),  # Gastos operativos general
                 ('company', '=', company.id),
                 ])
         revenue, = Account.find([
                 ('kind', '=', 'revenue'),
-                ('code', '=', '515'),  # Ingresos por Ventas
+                ('code', '=', '41100'),  # Ingresos por ventas
                 ('company', '=', company.id),
                 ])
 
@@ -802,6 +818,8 @@ def setup_production(config, activated, company):
 
     output = bom.outputs.new()
     computer = create_product('Computer', Decimal(750), Decimal(465))
+    computer.template.producible = True
+    computer.template.save()
     output.product = computer
     output.quantity = 1
 
@@ -956,15 +974,17 @@ def setup_languages(config, modules, demo_password, company=None):
     Group = Model.get('res.group')
     Action = Model.get('ir.action')
 
-    langs = Lang.find([
-            ('code', '=', 'es'),
-            ])
+    langs = Lang.find([('code', '=', 'es')])
     Lang.write([x.id for x in langs], {
             'translatable': True,
             }, config.context)
     Module.upgrade([x.id for x in Module.find([('name', 'in', modules)])],
         config.context)
     Wizard('ir.module.activate_upgrade').execute('upgrade')
+
+    admin = config.user
+    # Use root to skip password validation
+    config.user = 0
 
     menu, = Action.find([('usage', '=', 'menu')])
     for lang in langs:
@@ -994,9 +1014,11 @@ def setup_languages(config, modules, demo_password, company=None):
             user.company = company
         user.save()
 
+    config.user = admin
 
-def main(database, modules, demo_password):
-    config = set_config(database)
+
+def main(database, modules, demo_password, config_file=None):
+    config = set_config(database, config_file)
     to_activate, activated = activate_modules(config, modules)
 
     if ('party' in to_activate
@@ -1010,7 +1032,7 @@ def main(database, modules, demo_password):
     elif 'company' in activated:
         Company = Model.get('company.company')
         company, = Company.find([
-                ('party.name', '=', 'Michael Scott Paper Company'),
+                ('party.name', '=', 'Cooperativa de Trabajo La Metalurgica LTDA'),
                 ])
     else:
         company = None
@@ -1045,14 +1067,14 @@ def main(database, modules, demo_password):
     if 'account_invoice' in activated:
         setup_account_invoice_post(config, activated, company)
 
-    #if 'account_payment' in installed:
-    #    setup_account_payment(config, installed, company)
+    #if 'account_payment' in activated:
+    #    setup_account_payment(config, activated, company)
+
+    if 'account_statement' in activated:
+        setup_account_statement(config, activated, company)
 
     if 'account_voucher_ar' in to_activate:
         setup_account_voucher_ar(config, activated, company)
-
-    if 'account_statement' in to_activate:
-        setup_account_statement(config, activated, company)
 
     if 'project' in activated:
         setup_project(config, activated, company, customers)
@@ -1065,8 +1087,10 @@ def main(database, modules, demo_password):
 
     setup_languages(config, to_activate, demo_password, company=company)
 
+
 if __name__ == '__main__':
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
+    parser.add_argument('-c', '--config', dest='config_file')
     parser.add_argument('-m', '--module', dest='modules', nargs='+',
         help='module to install', default=[
             'account',
@@ -1084,12 +1108,11 @@ if __name__ == '__main__':
             'production',
             'production_routing',
             'production_work',
-            'account_coop_ar',
+            'account_ar',
             'party_ar',
             'account_voucher_ar',
             'account_check_ar',
             'account_retencion_ar',
-            #'company_logo',
             'account_invoice_ar',
             'sale_pos_ar',
             'subdiario',
@@ -1097,7 +1120,6 @@ if __name__ == '__main__':
             'current_account',
             'recover_invoice_ar',
             'bank_ar',
-            'account_invoice_visible_payments',
             'project_invoice',
             'analytic_account',
             'analytic_invoice',
@@ -1110,4 +1132,5 @@ if __name__ == '__main__':
         default='demo', help="database name")
     options = parser.parse_args()
     sys.argv = []  # clean argv for trytond
-    main(options.database, options.modules, options.demo_password)
+    main(options.database, options.modules, options.demo_password,
+        config_file=options.config_file)
